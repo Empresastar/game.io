@@ -3,235 +3,341 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Slither P2P - Multiplayer</title>
+    <title>Slither.io P2P - Auto-Host System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap');
-        body { background-color: #05070a; margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; color: white; }
+        body { background: #05070a; margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; color: white; }
         canvas { display: block; }
         .font-game { font-family: 'Fredoka+One', cursive; }
-        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .glass { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.1); }
+        .glow-green { box-shadow: 0 0 20px rgba(34, 197, 94, 0.4); }
+        .glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); }
+        #log { font-family: monospace; font-size: 10px; pointer-events: none; }
     </style>
 </head>
 <body class="relative select-none">
 
-    <div id="menu" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
-        <div class="w-full max-w-md glass rounded-[2.5rem] p-10 text-center shadow-2xl">
-            <h1 class="text-6xl font-game italic mb-4">slither.p2p</h1>
+    <div id="log" class="fixed top-2 left-2 z-[100] text-gray-500 max-w-xs pointer-events-none"></div>
+
+    <div id="menu" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+        <div class="w-full max-w-lg glass rounded-[3rem] p-12 text-center shadow-2xl animate-in zoom-in duration-300">
+            <h1 class="text-7xl font-game italic mb-2 tracking-tighter">slither.io</h1>
+            <p class="text-blue-400 font-bold tracking-[0.3em] text-[10px] uppercase mb-10">P2P Auto-Connect System</p>
             
-            <div class="space-y-4">
-                <input type="text" id="nickInput" placeholder="NICKNAME" class="w-full bg-slate-900 border-2 border-slate-700 rounded-xl py-3 px-4 text-center font-bold text-xl">
+            <div class="space-y-6">
+                <input type="text" id="nickInput" maxlength="12" placeholder="NICKNAME" 
+                    class="w-full bg-slate-900 border-2 border-slate-700 rounded-2xl py-5 px-6 text-center text-2xl font-bold focus:outline-none focus:border-blue-500 transition-all">
                 
-                <div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700">
-                    <p class="text-[10px] text-slate-400 uppercase font-bold mb-2">Room ID (Host ou Conectar)</p>
-                    <input type="text" id="roomIdInput" value="sala-secreta-123" class="w-full bg-transparent text-center text-green-400 font-mono text-lg focus:outline-none">
+                <div class="bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
+                    <p class="text-slate-500 text-[10px] uppercase font-bold mb-1">Room Name (Shared)</p>
+                    <input type="text" id="roomId" value="arena-global-1" 
+                        class="w-full bg-transparent text-center text-xl text-blue-300 font-mono focus:outline-none">
                 </div>
 
-                <div class="grid grid-cols-2 gap-3">
-                    <button onclick="Game.init(true)" class="bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-game uppercase">Be Host</button>
-                    <button onclick="Game.init(false)" class="bg-green-600 hover:bg-green-500 py-4 rounded-xl font-game uppercase">Join Game</button>
-                </div>
+                <button onclick="Core.connect()" id="connectBtn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-game text-3xl py-6 rounded-2xl glow-blue transition-all active:scale-95 uppercase">
+                    Join Arena
+                </button>
             </div>
-            <p id="statusMsg" class="mt-4 text-xs text-slate-500 italic">Aguardando ação...</p>
+            
+            <p class="mt-6 text-slate-500 text-xs italic">O primeiro a entrar vira Host automaticamente.</p>
         </div>
     </div>
 
     <div id="hud" class="hidden pointer-events-none">
-        <div class="fixed top-6 left-6 glass px-6 py-2 rounded-full border border-white/10">
-            <span id="playerRole" class="text-[10px] font-bold uppercase text-blue-400">P2P</span>
+        <div class="fixed top-6 right-6 w-52 glass p-5 rounded-3xl border border-white/5">
+            <h3 class="text-yellow-500 font-game text-[10px] mb-3 text-center uppercase tracking-widest">Leaderboard</h3>
+            <div id="lbList" class="text-[11px] font-mono space-y-1"></div>
         </div>
-        <div class="fixed bottom-10 left-10 glass px-8 py-4 rounded-full">
-            <span id="liveScore" class="text-3xl font-game text-green-400">0</span>
+        
+        <div class="fixed bottom-10 left-10 glass px-8 py-4 rounded-full border border-blue-500/20">
+            <span id="roleTag" class="text-[9px] font-bold uppercase block text-blue-400 mb-1">Status: Connecting</span>
+            <span id="scoreVal" class="text-4xl font-game text-white">10</span>
         </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        const Game = (() => {
+        /**
+         * ENGINE P2P MULTIPLAYER (AUTO-HOST)
+         */
+        const Core = (() => {
             const canvas = document.getElementById('gameCanvas');
             const ctx = canvas.getContext('2d');
             let peer, conn;
-            let isHost = false;
-            let players = {}; // { id: {x, y, angle, nick, color, parts} }
-            let foods = [];
-            let myId;
-
+            
+            const WORLD = 4000;
             const state = {
-                width: window.innerWidth,
-                height: window.innerHeight,
+                isPlaying: false,
+                isHost: false,
+                myId: null,
+                roomName: '',
+                players: {}, // Objeto com todos os snakes
+                foods: [],
                 camera: { x: 0, y: 0 },
-                mouse: { x: 0, y: 0 }
+                mouse: { x: 0, y: 0, down: false },
+                width: window.innerWidth,
+                height: window.innerHeight
             };
 
-            function init(hostMode) {
-                const nick = document.getElementById('nickInput').value || "Guest";
-                const roomId = document.getElementById('roomIdInput').value;
-                const status = document.getElementById('statusMsg');
-                
-                isHost = hostMode;
-                status.innerText = isHost ? "Iniciando Host..." : "Conectando ao Host...";
+            class Snake {
+                constructor(id, nick, color, x, y) {
+                    this.id = id;
+                    this.nick = nick;
+                    this.color = color;
+                    this.parts = Array(15).fill({x, y});
+                    this.angle = 0;
+                    this.radius = 12;
+                    this.dead = false;
+                }
 
-                // Inicializa PeerJS
-                // Se for Host, ele tenta usar o RoomID. Se for Cliente, ele gera um ID aleatório.
-                peer = new Peer(isHost ? roomId : null);
+                draw() {
+                    ctx.save();
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = this.color;
+                    this.parts.forEach((p, i) => {
+                        const r = this.radius * (1 - (i / (this.parts.length * 2)));
+                        ctx.fillStyle = this.color;
+                        ctx.beginPath();
+                        ctx.arc(p.x - state.camera.x, p.y - state.camera.y, r, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+                    
+                    // Nickname
+                    ctx.fillStyle = "white";
+                    ctx.font = "bold 12px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText(this.nick, this.parts[0].x - state.camera.x, this.parts[0].y - state.camera.y - 25);
+                    ctx.restore();
+                }
+            }
+
+            function log(msg) {
+                const l = document.getElementById('log');
+                l.innerHTML = `> ${msg}<br>` + l.innerHTML;
+            }
+
+            function connect() {
+                state.roomName = document.getElementById('roomId').value;
+                const nick = document.getElementById('nickInput').value || "Snake";
+                const btn = document.getElementById('connectBtn');
+                
+                btn.disabled = true;
+                btn.innerText = "Searching...";
+                
+                // Tenta entrar como cliente primeiro
+                peer = new Peer();
 
                 peer.on('open', (id) => {
-                    myId = id;
-                    if (!isHost) {
-                        // Cliente: Conecta ao Host usando o RoomID fornecido
-                        conn = peer.connect(roomId);
-                        setupConnection(conn);
-                    } else {
-                        status.innerText = "Host Ativo! Aguardando jogadores...";
-                        startLocalGame(nick);
-                    }
-                });
+                    state.myId = id;
+                    log(`Meu ID: ${id}`);
+                    
+                    // Tenta conectar ao ID da sala (que seria o ID do host)
+                    const connection = peer.connect(state.roomName);
+                    
+                    // Timeout para decidir se eu viro host
+                    const timeout = setTimeout(() => {
+                        if (!conn) {
+                            log("Nenhum host encontrado. Me tornando o Host...");
+                            peer.destroy(); // Destrói peer aleatório
+                            setupHost(state.roomName, nick);
+                        }
+                    }, 3000);
 
-                peer.on('connection', (c) => {
-                    // Host recebe conexões
-                    setupConnection(c);
+                    connection.on('open', () => {
+                        clearTimeout(timeout);
+                        conn = connection;
+                        log("Conectado ao Host!");
+                        setupClient(nick);
+                    });
+                });
+            }
+
+            // --- LÓGICA DO HOST ---
+            function setupHost(id, nick) {
+                peer = new Peer(id); // Tenta criar o Peer com o nome da sala
+                
+                peer.on('open', () => {
+                    state.isHost = true;
+                    document.getElementById('roleTag').innerText = "Status: HOST (Server)";
+                    document.getElementById('roleTag').classList.replace('text-blue-400', 'text-green-400');
+                    
+                    // Inicializa local
+                    initLocal(nick);
+                    for(let i=0; i<200; i++) spawnFood();
+
+                    peer.on('connection', (c) => {
+                        log(`Novo jogador conectado: ${c.peer}`);
+                        c.on('data', (data) => handleNetworkData(c, data));
+                    });
                 });
 
                 peer.on('error', (err) => {
-                    alert("Erro no P2P: " + err.type);
-                    location.reload();
+                    if (err.type === 'unavailable-id') {
+                        log("Erro: Sala já ocupada. Tentando reconectar como cliente...");
+                        location.reload();
+                    }
                 });
             }
 
-            function setupConnection(c) {
-                conn = c;
-                conn.on('open', () => {
-                    document.getElementById('menu').style.display = 'none';
-                    document.getElementById('hud').classList.remove('hidden');
-                    document.getElementById('playerRole').innerText = isHost ? "HOST" : "CLIENT";
+            // --- LÓGICA DO CLIENTE ---
+            function setupClient(nick) {
+                state.isHost = false;
+                document.getElementById('roleTag').innerText = "Status: CLIENT (Connected)";
+                initLocal(nick);
+
+                conn.on('data', (data) => handleNetworkData(conn, data));
+                
+                // Enviar meus dados periodicamente
+                setInterval(() => {
+                    if (conn.open) {
+                        conn.send({
+                            type: 'PLAYER_MOVE',
+                            id: state.myId,
+                            data: state.players[state.myId]
+                        });
+                    }
+                }, 30);
+            }
+
+            function handleNetworkData(connection, msg) {
+                if (msg.type === 'PLAYER_MOVE') {
+                    state.players[msg.id] = msg.data;
                     
-                    if (!isHost) {
-                        startLocalGame(document.getElementById('nickInput').value);
+                    // Se eu for host, replico a posição para todos os outros
+                    if (state.isHost) {
+                        broadcast({
+                            type: 'SYNC_ALL',
+                            players: state.players,
+                            foods: state.foods
+                        });
                     }
-
-                    // Loop de envio de dados (Network Tick)
-                    setInterval(() => {
-                        if (conn && conn.open) {
-                            conn.send({
-                                type: 'update',
-                                id: myId,
-                                data: players[myId]
-                            });
-                        }
-                    }, 50); // 20hz update rate
-                });
-
-                conn.on('data', (data) => {
-                    if (data.type === 'update') {
-                        players[data.id] = data.data;
-                    }
-                    if (data.type === 'food_sync' && !isHost) {
-                        foods = data.foods;
-                    }
-                });
+                }
+                
+                if (msg.type === 'SYNC_ALL' && !state.isHost) {
+                    // Cliente recebe estado total do host
+                    Object.assign(state.players, msg.players);
+                    state.foods = msg.foods;
+                }
             }
 
-            function startLocalGame(nick) {
-                document.getElementById('menu').style.display = 'none';
-                document.getElementById('hud').classList.remove('hidden');
-
-                // Cria jogador local
-                players[myId] = {
-                    x: Math.random() * 2000,
-                    y: Math.random() * 2000,
-                    nick: nick,
-                    color: `hsl(${Math.random() * 360}, 70%, 60%)`,
-                    parts: Array(10).fill({x: 0, y: 0})
-                };
-
-                if (isHost) {
-                    for(let i=0; i<100; i++) spawnFood();
-                }
-
-                requestAnimationFrame(gameLoop);
+            function broadcast(data) {
+                // Host envia para todos os peers conectados
+                Object.values(peer.connections).forEach(conns => {
+                    conns.forEach(c => c.send(data));
+                });
             }
 
             function spawnFood() {
-                foods.push({
-                    x: Math.random() * 2000,
-                    y: Math.random() * 2000,
-                    color: `hsl(${Math.random() * 360}, 80%, 50%)`
+                state.foods.push({
+                    x: Math.random() * WORLD,
+                    y: Math.random() * WORLD,
+                    color: `hsl(${Math.random() * 360}, 80%, 60%)`,
+                    r: Math.random() * 3 + 2
                 });
+            }
+
+            function initLocal(nick) {
+                document.getElementById('menu').classList.add('hidden');
+                document.getElementById('hud').classList.remove('hidden');
+                
+                state.players[state.myId] = new Snake(
+                    state.myId, 
+                    nick, 
+                    state.isHost ? "#4ade80" : "#60a5fa", 
+                    WORLD/2, WORLD/2
+                );
+                
+                state.isPlaying = true;
+                requestAnimationFrame(loop);
             }
 
             function update() {
-                const me = players[myId];
+                if (!state.isPlaying) return;
+                const me = state.players[state.myId];
                 if (!me) return;
 
-                // Movimento local suave
+                // Cálculo de ângulo
                 const dx = state.mouse.x - (state.width / 2);
                 const dy = state.mouse.y - (state.height / 2);
-                const angle = Math.atan2(dy, dx);
+                me.angle = Math.atan2(dy, dx);
 
-                me.x += Math.cos(angle) * 4;
-                me.y += Math.sin(angle) * 4;
+                // Movimento
+                const speed = 4;
+                const head = { ...me.parts[0] };
+                head.x += Math.cos(me.angle) * speed;
+                head.y += Math.sin(me.angle) * speed;
 
-                // Atualiza partes do corpo
-                me.parts.unshift({x: me.x, y: me.y});
+                me.parts.unshift(head);
                 me.parts.pop();
 
                 // Câmera
-                state.camera.x += (me.x - state.width / 2 - state.camera.x) * 0.1;
-                state.camera.y += (me.y - state.height / 2 - state.camera.y) * 0.1;
+                state.camera.x += (head.x - state.width / 2 - state.camera.x) * 0.1;
+                state.camera.y += (head.y - state.height / 2 - state.camera.y) * 0.1;
 
-                if (isHost && conn && conn.open) {
-                    conn.send({ type: 'food_sync', foods: foods });
+                // Se for Host, checa colisão com comida
+                if (state.isHost) {
+                    state.foods.forEach((f, i) => {
+                        if (Math.hypot(head.x - f.x, head.y - f.y) < 15) {
+                            state.foods.splice(i, 1);
+                            me.parts.push({...me.parts[me.parts.length-1]}); // Cresce
+                            spawnFood();
+                        }
+                    });
                 }
+                
+                document.getElementById('scoreVal').innerText = me.parts.length;
             }
 
-            function draw() {
+            function render() {
                 ctx.fillStyle = "#05070a";
                 ctx.fillRect(0, 0, state.width, state.height);
 
-                // Desenha Grid
+                // Grid
                 ctx.strokeStyle = "#111827";
-                for(let x = -state.camera.x % 100; x < state.width; x+=100) {
+                ctx.lineWidth = 1;
+                for(let x = -state.camera.x % 100; x < state.width; x += 100) {
                     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, state.height); ctx.stroke();
                 }
 
-                // Desenha Comida
-                foods.forEach(f => {
+                // Foods
+                state.foods.forEach(f => {
                     ctx.fillStyle = f.color;
                     ctx.beginPath();
-                    ctx.arc(f.x - state.camera.x, f.y - state.camera.y, 4, 0, Math.PI*2);
+                    ctx.arc(f.x - state.camera.x, f.y - state.camera.y, f.r, 0, Math.PI*2);
                     ctx.fill();
                 });
 
-                // Desenha todos os jogadores
-                Object.keys(players).forEach(id => {
-                    const p = players[id];
-                    ctx.fillStyle = p.color;
-                    p.parts.forEach((part, i) => {
+                // Snakes
+                Object.values(state.players).forEach(s => {
+                    // Como recebemos dados crus via rede, precisamos garantir que o desenho funcione
+                    ctx.save();
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = s.color;
+                    s.parts.forEach((p, i) => {
+                        ctx.fillStyle = s.color;
                         ctx.beginPath();
-                        ctx.arc(part.x - state.camera.x, part.y - state.camera.y, 10 - (i*0.2), 0, Math.PI*2);
+                        ctx.arc(p.x - state.camera.x, p.y - state.camera.y, 10, 0, Math.PI*2);
                         ctx.fill();
                     });
-                    ctx.fillStyle = "white";
-                    ctx.fillText(p.nick, p.x - state.camera.x - 10, p.y - state.camera.y - 20);
+                    ctx.restore();
                 });
             }
 
-            function gameLoop() {
+            function loop() {
                 update();
-                draw();
-                requestAnimationFrame(gameLoop);
+                render();
+                requestAnimationFrame(loop);
             }
 
+            // Setup Eventos
             window.addEventListener('mousemove', e => { state.mouse.x = e.clientX; state.mouse.y = e.clientY; });
-            window.addEventListener('resize', () => { 
-                state.width = canvas.width = window.innerWidth; 
-                state.height = canvas.height = window.innerHeight; 
-            });
+            window.addEventListener('resize', () => { state.width = canvas.width = window.innerWidth; state.height = canvas.height = window.innerHeight; });
             canvas.width = state.width; canvas.height = state.height;
 
-            return { init };
+            return { connect };
         })();
     </script>
 </body>
