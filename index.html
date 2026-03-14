@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Slither.io Ultra - 500 Lines Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap');
+        
+        :root { --primary: #22c55e; --bg: #05070a; }
+        body { background-color: var(--bg); margin: 0; overflow: hidden; font-family: 'Segoe UI', Roboto, sans-serif; }
+        canvas { display: block; touch-action: none; }
+        .font-game { font-family: 'Fredoka+One', cursive; }
+        
+        /* UI Estilizada */
+        .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
+        .btn-shadow { box-shadow: 0 0 20px rgba(34, 197, 94, 0.4); }
+        
+        #gameOverOverlay { 
+            background: radial-gradient(circle, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.9) 100%);
+            display: none; opacity: 0; transition: opacity 0.5s ease;
+        }
+        #gameOverOverlay.active { display: flex; opacity: 1; }
+
+        /* Animações */
+        @keyframes pulse-gold { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        .winner-anim { animation: pulse-gold 2s infinite; }
+    </style>
+</head>
+<body class="relative select-none text-white">
+
+    <div id="menu" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="w-full max-w-lg glass rounded-[3rem] p-12 text-center shadow-2xl border-t border-white/20">
+            <h1 class="text-8xl font-game italic mb-2 tracking-tighter text-white drop-shadow-[0_5px_15px_rgba(0,0,0,0.5)]">slither.io</h1>
+            <p class="text-green-400 font-bold tracking-[0.4em] text-[10px] uppercase mb-10">Advanced Web Engine</p>
+            
+            <div class="space-y-6">
+                <input type="text" id="nickInput" maxlength="15" placeholder="NICKNAME" 
+                    class="w-full bg-slate-900/80 border-2 border-slate-700 rounded-2xl py-5 px-6 text-center text-2xl font-bold focus:outline-none focus:border-green-500 focus:ring-4 focus:ring-green-500/10 transition-all">
+                
+                <button onclick="Engine.initGame()" class="w-full bg-green-500 hover:bg-green-400 text-slate-950 font-game text-4xl py-6 rounded-2xl btn-shadow transition-all active:scale-95 uppercase italic">
+                    Play Solo
+                </button>
+            </div>
+            
+            <div class="mt-10 flex justify-around text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                <span class="hover:text-white cursor-pointer">Skins</span>
+                <span class="hover:text-white cursor-pointer">Graphics: High</span>
+                <span class="hover:text-white cursor-pointer">About</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="gameOverOverlay" class="fixed inset-0 z-[100] flex-col items-center justify-center p-6 text-center">
+        <div class="max-w-md w-full glass rounded-[2.5rem] p-10 border-red-500/20">
+            <h2 class="text-6xl font-game text-red-500 mb-2 italic">DIED!</h2>
+            <div class="py-6 space-y-2">
+                <p class="text-slate-400 uppercase text-xs font-bold">Final Length</p>
+                <p id="finalScore" class="text-6xl font-game text-white">0</p>
+            </div>
+            
+            <div class="winner-anim p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-2xl mb-8">
+                <p class="text-yellow-500 text-[10px] font-bold uppercase mb-1">New Champion Message</p>
+                <p class="text-white italic text-sm">"You are the new champion! Enter a victory message that you would like all other players to see!"</p>
+            </div>
+
+            <button onclick="Engine.reset()" class="w-full bg-white hover:bg-slate-200 text-black font-game text-2xl py-5 rounded-2xl transition-all uppercase">
+                Play Again
+            </button>
+        </div>
+    </div>
+
+    <div id="hud" class="hidden pointer-events-none">
+        <div class="fixed top-6 right-6 w-56 glass p-5 rounded-3xl border border-white/5">
+            <h3 class="text-yellow-500 font-game text-xs mb-3 text-center uppercase tracking-tighter">Leaderboard</h3>
+            <div id="lbContent" class="text-[11px] font-mono space-y-1.5"></div>
+        </div>
+        
+        <div class="fixed bottom-10 left-10 flex items-end gap-4">
+            <div class="glass px-8 py-4 rounded-full border border-green-500/20">
+                <span class="text-slate-500 text-[10px] font-bold uppercase mr-3">Length</span>
+                <span id="liveScore" class="text-3xl font-game text-green-400">10</span>
+            </div>
+        </div>
+
+        <div class="fixed bottom-10 right-10">
+            <canvas id="radar" width="160" height="160" class="rounded-full glass border border-white/10 shadow-2xl"></canvas>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        /**
+         * SLITHER.IO CORE ENGINE
+         * Version: 2.0.0
+         * Lines of Code Expansion: ~500
+         */
+
+        const Engine = (() => {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const radarCanvas = document.getElementById('radar');
+            const rctx = radarCanvas.getContext('2d');
+            
+            // Constantes Globais
+            const WORLD = 5000;
+            const GRID_SIZE = 120;
+            const INITIAL_BOTS = 20;
+            const INITIAL_FOOD = 600;
+
+            let state = {
+                isPlaying: false,
+                width: 0,
+                height: 0,
+                camera: { x: 0, y: 0, zoom: 1 },
+                mouse: { x: 0, y: 0, down: false },
+                player: null,
+                bots: [],
+                foods: [],
+                particles: []
+            };
+
+            class Particle {
+                constructor(x, y, color) {
+                    this.x = x; this.y = y;
+                    this.vx = (Math.random() - 0.5) * 4;
+                    this.vy = (Math.random() - 0.5) * 4;
+                    this.life = 1.0;
+                    this.color = color;
+                }
+                update() { this.x += this.vx; this.y += this.vy; this.life -= 0.02; }
+                draw() {
+                    ctx.globalAlpha = this.life;
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath(); ctx.arc(this.x - state.camera.x, this.y - state.camera.y, 2, 0, Math.PI*2); ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+
+            class Snake {
+                constructor(x, y, name, color, isPlayer = false) {
+                    this.parts = [];
+                    this.name = name;
+                    this.color = color;
+                    this.isPlayer = isPlayer;
+                    this.angle = Math.random() * Math.PI * 2;
+                    this.speed = 3.5;
+                    this.radius = 12;
+                    this.targetLength = 25;
+                    this.isDead = false;
+                    this.dashCooldown = 0;
+
+                    for(let i=0; i<this.targetLength; i++) {
+                        this.parts.push({ x: x, y: y });
+                    }
+                }
+
+                update() {
+                    if(this.isDead) return;
+
+                    // Lógica de Direção
+                    if(this.isPlayer) {
+                        const dx = state.mouse.x - (state.width / 2);
+                        const dy = state.mouse.y - (state.height / 2);
+                        const targetAngle = Math.atan2(dy, dx);
+                        
+                        // Interpolação de ângulo para suavidade
+                        let diff = targetAngle - this.angle;
+                        while (diff < -Math.PI) diff += Math.PI * 2;
+                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        this.angle += diff * 0.15;
+
+                        // Turbo
+                        if(state.mouse.down && this.targetLength > 15) {
+                            this.speed = 7;
+                            this.targetLength -= 0.1;
+                            if(Math.random() > 0.7) spawnFood(this.parts[this.parts.length-1].x, this.parts[this.parts.length-1].y, this.color, 0.5);
+                        } else {
+                            this.speed = 3.5;
+                        }
+                    } else {
+                        // IA de Bot
+                        if(Math.random() < 0.03) this.angle += (Math.random() - 0.5) * 1.5;
+                        
+                        // Evitar bordas
+                        const head = this.parts[0];
+                        if(head.x < 500 || head.x > WORLD-500 || head.y < 500 || head.y > WORLD-500) {
+                            this.angle += 0.2;
+                        }
+                    }
+
+                    // Movimento físico
+                    let head = { ...this.parts[0] };
+                    head.x += Math.cos(this.angle) * this.speed;
+                    head.y += Math.sin(this.angle) * this.speed;
+
+                    // Colisão com bordas do mundo
+                    if(head.x < 0 || head.x > WORLD || head.y < 0 || head.y > WORLD) {
+                        this.die();
+                        return;
+                    }
+
+                    this.parts.unshift(head);
+                    if(this.parts.length > this.targetLength) this.parts.pop();
+
+                    // Crescer ao comer
+                    state.foods.forEach((f, i) => {
+                        const dist = Math.hypot(head.x - f.x, head.y - f.y);
+                        if(dist < this.radius + f.r) {
+                            this.targetLength += f.v;
+                            state.foods.splice(i, 1);
+                            if(this.isPlayer) {
+                                for(let p=0; p<3; p++) state.particles.push(new Particle(f.x, f.y, f.color));
+                            }
+                            spawnFood();
+                        }
+                    });
+                }
+
+                draw() {
+                    ctx.save();
+                    // Glow effect
+                    ctx.shadowBlur = this.isPlayer ? 15 : 5;
+                    ctx.shadowColor = this.color;
+
+                    for(let i = this.parts.length - 1; i >= 0; i--) {
+                        const p = this.parts[i];
+                        const r = this.radius * (1 - (i / (this.parts.length * 2)));
+                        
+                        ctx.fillStyle = this.color;
+                        if(i % 2 === 0 && !this.isPlayer) ctx.fillStyle = '#ffffff22';
+                        
+                        ctx.beginPath();
+                        ctx.arc(p.x - state.camera.x, p.y - state.camera.y, r, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        if(i === 0) { // Cabeça
+                            ctx.fillStyle = "white";
+                            const eyeX = p.x - state.camera.x + Math.cos(this.angle + 0.5) * 5;
+                            const eyeY = p.y - state.camera.y + Math.sin(this.angle + 0.5) * 5;
+                            ctx.beginPath(); ctx.arc(eyeX, eyeY, 3, 0, Math.PI*2); ctx.fill();
+                        }
+                    }
+                    
+                    // Texto do Nick
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = "rgba(255,255,255,0.6)";
+                    ctx.font = "bold 12px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText(this.name, this.parts[0].x - state.camera.x, this.parts[0].y - state.camera.y - 25);
+                    ctx.restore();
+                }
+
+                die() {
+                    if(this.isDead) return;
+                    this.isDead = true;
+                    // Explodir em comida
+                    this.parts.forEach((p, i) => {
+                        if(i % 4 === 0) spawnFood(p.x, p.y, this.color, 2);
+                    });
+
+                    if(this.isPlayer) {
+                        state.isPlaying = false;
+                        document.getElementById('finalScore').innerText = Math.floor(this.targetLength);
+                        document.getElementById('gameOverOverlay').classList.add('active');
+                    } else {
+                        state.bots = state.bots.filter(b => b !== this);
+                        setTimeout(() => spawnBot(), 3000);
+                    }
+                }
+            }
+
+            function spawnFood(x, y, color, val) {
+                state.foods.push({
+                    x: x || Math.random() * WORLD,
+                    y: y || Math.random() * WORLD,
+                    r: Math.random() * 3 + 2,
+                    v: val || 1,
+                    color: color || `hsl(${Math.random() * 360}, 80%, 60%)`
+                });
+            }
+
+            function spawnBot() {
+                const names = ["Shadow", "Viper", "Dragon", "Mamba", "DevKiller", "Crawler", "Zen", "X-Slayer"];
+                state.bots.push(new Snake(
+                    Math.random() * WORLD, 
+                    Math.random() * WORLD, 
+                    names[Math.floor(Math.random() * names.length)] + "_" + Math.floor(Math.random()*99), 
+                    `hsl(${Math.random() * 360}, 60%, 50%)`
+                ));
+            }
+
+            function checkCollisions() {
+                const all = [state.player, ...state.bots];
+                all.forEach(s1 => {
+                    if(!s1 || s1.isDead) return;
+                    const head = s1.parts[0];
+
+                    all.forEach(s2 => {
+                        if(!s2 || s1 === s2) return;
+                        // Checa cabeça de s1 contra corpo de s2
+                        for(let i=0; i < s2.parts.length; i++) {
+                            const p = s2.parts[i];
+                            const dist = Math.hypot(head.x - p.x, head.y - p.y);
+                            if(dist < s1.radius + s2.radius - 5) {
+                                s1.die();
+                                break;
+                            }
+                        }
+                    });
+                });
+            }
+
+            function drawRadar() {
+                rctx.clearRect(0,0,160,160);
+                const scale = 160 / WORLD;
+                
+                // Desenha borda
+                rctx.strokeStyle = "rgba(255,255,255,0.1)";
+                rctx.strokeRect(0,0,160,160);
+
+                // Comida densa
+                rctx.fillStyle = "rgba(255,255,255,0.05)";
+                state.foods.slice(0, 50).forEach(f => rctx.fillRect(f.x*scale, f.y*scale, 1, 1));
+
+                // Player
+                if(state.player) {
+                    rctx.fillStyle = "#22c55e";
+                    rctx.beginPath(); rctx.arc(state.player.parts[0].x*scale, state.player.parts[0].y*scale, 3, 0, Math.PI*2); rctx.fill();
+                }
+
+                // Bots
+                rctx.fillStyle = "rgba(255,255,255,0.3)";
+                state.bots.forEach(b => {
+                    rctx.fillRect(b.parts[0].x*scale, b.parts[0].y*scale, 2, 2);
+                });
+            }
+
+            function update() {
+                if(!state.isPlaying) return;
+
+                // Câmera segue player com suavidade
+                const targetX = state.player.parts[0].x - state.width / 2;
+                const targetY = state.player.parts[0].y - state.height / 2;
+                state.camera.x += (targetX - state.camera.x) * 0.1;
+                state.camera.y += (targetY - state.camera.y) * 0.1;
+
+                state.player.update();
+                state.bots.forEach(b => b.update());
+                state.particles.forEach((p, i) => {
+                    p.update();
+                    if(p.life <= 0) state.particles.splice(i, 1);
+                });
+
+                checkCollisions();
+                
+                // Update HUD
+                document.getElementById('liveScore').innerText = Math.floor(state.player.targetLength * 10);
+                if(Math.random() > 0.9) updateLeaderboard();
+            }
+
+            function updateLeaderboard() {
+                const all = [state.player, ...state.bots].sort((a,b) => b.targetLength - a.targetLength).slice(0, 10);
+                const html = all.map((s, i) => `
+                    <div class="flex justify-between ${s.isPlayer ? 'text-green-400 font-bold' : 'text-slate-400'}">
+                        <span>${i+1}. ${s.name}</span>
+                        <span>${Math.floor(s.targetLength * 10)}</span>
+                    </div>
+                `).join('');
+                document.getElementById('lbContent').innerHTML = html;
+            }
+
+            function render() {
+                ctx.fillStyle = "#05070a";
+                ctx.fillRect(0, 0, state.width, state.height);
+
+                // Desenha Grid Dinâmico
+                ctx.beginPath();
+                ctx.strokeStyle = "#111827";
+                ctx.lineWidth = 1;
+                for (let x = -state.camera.x % GRID_SIZE; x < state.width; x += GRID_SIZE) {
+                    ctx.moveTo(x, 0); ctx.lineTo(x, state.height);
+                }
+                for (let y = -state.camera.y % GRID_SIZE; y < state.height; y += GRID_SIZE) {
+                    ctx.moveTo(0, y); ctx.lineTo(state.width, y);
+                }
+                ctx.stroke();
+
+                // Desenha bordas do mundo
+                ctx.strokeStyle = "#ef444455";
+                ctx.lineWidth = 10;
+                ctx.strokeRect(-state.camera.x, -state.camera.y, WORLD, WORLD);
+
+                // Objetos
+                state.foods.forEach(f => {
+                    // Culling: só desenha o que está na tela
+                    if(f.x > state.camera.x && f.x < state.camera.x + state.width && f.y > state.camera.y && f.y < state.camera.y + state.height) {
+                        ctx.fillStyle = f.color;
+                        ctx.beginPath(); ctx.arc(f.x - state.camera.x, f.y - state.camera.y, f.r, 0, Math.PI*2); ctx.fill();
+                    }
+                });
+
+                state.particles.forEach(p => p.draw());
+                state.bots.forEach(b => b.draw());
+                if(state.player) state.player.draw();
+
+                drawRadar();
+            }
+
+            function loop() {
+                update();
+                render();
+                requestAnimationFrame(loop);
+            }
+
+            return {
+                init: () => {
+                    state.width = canvas.width = window.innerWidth;
+                    state.height = canvas.height = window.innerHeight;
+                    
+                    window.addEventListener('resize', () => {
+                        state.width = canvas.width = window.innerWidth;
+                        state.height = canvas.height = window.innerHeight;
+                    });
+
+                    window.addEventListener('mousemove', e => { state.mouse.x = e.clientX; state.mouse.y = e.clientY; });
+                    window.addEventListener('mousedown', () => state.mouse.down = true);
+                    window.addEventListener('mouseup', () => state.mouse.down = false);
+                    
+                    // Suporte Touch
+                    window.addEventListener('touchmove', e => {
+                        state.mouse.x = e.touches[0].clientX;
+                        state.mouse.y = e.touches[0].clientY;
+                    }, {passive: false});
+                    window.addEventListener('touchstart', () => state.mouse.down = true);
+                    window.addEventListener('touchend', () => state.mouse.down = false);
+
+                    for(let i=0; i<INITIAL_FOOD; i++) spawnFood();
+                    loop();
+                },
+
+                initGame: () => {
+                    const nick = document.getElementById('nickInput').value || "Unnamed";
+                    state.player = new Snake(WORLD/2, WORLD/2, nick, "#22c55e", true);
+                    state.bots = [];
+                    for(let i=0; i<INITIAL_BOTS; i++) spawnBot();
+                    
+                    document.getElementById('menu').style.display = 'none';
+                    document.getElementById('hud').classList.remove('hidden');
+                    state.isPlaying = true;
+                },
+
+                reset: () => {
+                    state.foods = [];
+                    for(let i=0; i<INITIAL_FOOD; i++) spawnFood();
+                    document.getElementById('gameOverOverlay').classList.remove('active');
+                    Engine.initGame();
+                }
+            };
+        })();
+
+        // Lançamento
+        window.onload = Engine.init;
+    </script>
+</body>
+</html>
